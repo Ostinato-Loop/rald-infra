@@ -1,0 +1,39 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: RALD OS Master Stack — deploys SES + CDN nested stacks
+
+Parameters:
+  Environment:
+    Type:    String
+    Default: production
+  AcmCertificateArn:
+    Type:    String
+    Default: ""
+
+Resources:
+  SESStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.amazonaws.com/rald-cfn-${AWS::AccountId}/ses-email.yml"
+      Parameters:
+        Environment: !Ref Environment
+      Tags:
+        - Key: Project
+          Value: rald-os
+
+  CDNStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.amazonaws.com/rald-cfn-${AWS::AccountId}/s3-cdn.yml"
+      Parameters:
+        AcmCertificateArn: !Ref AcmCertificateArn
+      Tags:
+        - Key: Project
+          Value: rald-os
+
+Outputs:
+  SMTPEndpoint:
+    Value: !GetAtt SESStack.Outputs.SmtpEndpoint
+  CDNDomain:
+    Value: !GetAtt CDNStack.Outputs.CDNDomain
+  AssetsBucket:
+    Value: !GetAtt CDNStack.Outputs.BucketName
