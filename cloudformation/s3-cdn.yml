@@ -1,0 +1,114 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  RALD OS — S3 + CloudFront CDN for static assets
+  Hosts SDK docs, product icons, and public static assets under cdn.rald.cloud
+
+Parameters:
+  Domain:
+    Type:    String
+    Default: rald.cloud
+  CdnSubdomain:
+    Type:    String
+    Default: cdn
+  AcmCertificateArn:
+    Type:    String
+    Description: "ACM cert ARN for cdn.rald.cloud (must be in us-east-1)"
+    Default: ""
+
+Conditions:
+  HasCertificate: !Not [!Equals [!Ref AcmCertificateArn, ""]]
+
+Resources:
+  # ── S3 Bucket ───────────────────────────────────────────────────────────────
+  RaldAssetsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "rald-assets-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls:       true
+        BlockPublicPolicy:     true
+        IgnorePublicAcls:      true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: delete-old-versions
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 30
+      Tags:
+        - Key: Project
+          Value: rald-os
+
+  # ── CloudFront OAC ──────────────────────────────────────────────────────────
+  RaldCFOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name:                          rald-assets-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior:               always
+        SigningProtocol:               sigv4
+
+  # ── Bucket Policy (allows CloudFront OAC) ───────────────────────────────────
+  RaldAssetsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref RaldAssetsBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action:   s3:GetObject
+            Resource: !Sub "${RaldAssetsBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${RaldCDN}"
+
+  # ── CloudFront Distribution ──────────────────────────────────────────────────
+  RaldCDN:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled:           true
+        Comment:           "RALD OS Assets CDN (cdn.rald.cloud)"
+        PriceClass:        PriceClass_100
+        HttpVersion:       http2and3
+        DefaultRootObject: ""
+        Aliases:           !If [HasCertificate, [!Sub "${CdnSubdomain}.${Domain}"], []]
+        ViewerCertificate:
+          !If
+            - HasCertificate
+            - AcmCertificateArn:      !Ref AcmCertificateArn
+              SslSupportMethod:       sni-only
+              MinimumProtocolVersion: TLSv1.2_2021
+            - CloudFrontDefaultCertificate: true
+        Origins:
+          - Id:         rald-assets-s3
+            DomainName: !GetAtt RaldAssetsBucket.RegionalDomainName
+            OriginAccessControlId: !Ref RaldCFOriginAccessControl
+            S3OriginConfig: {}
+        DefaultCacheBehavior:
+          TargetOriginId:       rald-assets-s3
+          ViewerProtocolPolicy: redirect-to-https
+          Compress:             true
+          CachePolicyId:        658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+          ResponseHeadersPolicyId: 5cc3b908-e619-4b99-88e5-2cf7f45965bd # CORS-With-Preflight
+        CustomErrorResponses:
+          - ErrorCode:          403
+            ResponseCode:       404
+            ResponsePagePath:   /404.html
+            ErrorCachingMinTTL: 60
+      Tags:
+        - Key: Project
+          Value: rald-os
+
+Outputs:
+  BucketName:
+    Value: !Ref RaldAssetsBucket
+  CDNDomain:
+    Value: !GetAtt RaldCDN.DomainName
+    Description: "CNAME this to cdn.rald.cloud in Cloudflare DNS"
+  DistributionId:
+    Value: !Ref RaldCDN
