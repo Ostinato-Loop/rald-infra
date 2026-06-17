@@ -1,20 +1,16 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   RALD OS — AWS SES email infrastructure for @rald.cloud
-  Provisions SES domain identity, DKIM, MAIL FROM, and SMTP credentials
-  for routing boyd@rald.cloud → Cloudflare Email routing → worker delivery.
+  Provisions SES domain identity with DKIM, MAIL FROM subdomain,
+  SMTP IAM user, and SSM parameters for Cloudflare Worker email delivery.
 
 Parameters:
   Domain:
     Type:    String
     Default: rald.cloud
-  MailFromSubdomain:
-    Type:    String
-    Default: mail
   Environment:
     Type:    String
     Default: production
-    AllowedValues: [production, staging]
 
 Resources:
   # ── SES Domain Identity ─────────────────────────────────────────────────────
@@ -22,11 +18,11 @@ Resources:
     Type: AWS::SES::EmailIdentity
     Properties:
       EmailIdentity: !Ref Domain
-      DkimAttributes:
-        SigningEnabled: true
+      DkimSigningAttributes:
+        NextSigningKeyLength: RSA_2048_BIT
       MailFromAttributes:
-        MailFromDomain:   !Sub "${MailFromSubdomain}.${Domain}"
-        BehaviorOnMxFailure: UseDefaultValue
+        MailFromDomain:        !Sub "mail.${Domain}"
+        BehaviorOnMxFailure:   UseDefaultValue
       FeedbackAttributes:
         EmailForwardingEnabled: true
       Tags:
@@ -35,7 +31,7 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  # ── Configuration Set (for event tracking) ─────────────────────────────────
+  # ── SES Configuration Set ───────────────────────────────────────────────────
   RaldSESConfigSet:
     Type: AWS::SES::ConfigurationSet
     Properties:
@@ -44,15 +40,8 @@ Resources:
         SendingEnabled: true
       ReputationOptions:
         ReputationMetricsEnabled: true
-      TrackingOptions:
-        CustomRedirectDomain: !Sub "links.${Domain}"
-      VdmOptions:
-        DashboardOptions:
-          EngagementMetrics: ENABLED
-        GuardianOptions:
-          OptimizedSharedDelivery: ENABLED
 
-  # ── SMTP IAM User (for Cloudflare Worker email sending) ─────────────────────
+  # ── SMTP IAM User ────────────────────────────────────────────────────────────
   RaldSMTPUser:
     Type: AWS::IAM::User
     Properties:
@@ -72,22 +61,16 @@ Resources:
             Action:
               - ses:SendEmail
               - ses:SendRawEmail
-              - ses:SendTemplatedEmail
             Resource: "*"
-            Condition:
-              StringEquals:
-                ses:FromAddress:
-                  - !Sub "noreply@${Domain}"
-                  - !Sub "auth@${Domain}"
-                  - !Sub "verify@${Domain}"
       Users: [!Ref RaldSMTPUser]
 
   RaldSMTPAccessKey:
     Type: AWS::IAM::AccessKey
     Properties:
       UserName: !Ref RaldSMTPUser
+    DependsOn: RaldSMTPUser
 
-  # ── SSM: store SMTP credentials for workers ─────────────────────────────────
+  # ── SSM Parameters ───────────────────────────────────────────────────────────
   RaldSMTPKeyIdParam:
     Type: AWS::SSM::Parameter
     Properties:
@@ -105,17 +88,17 @@ Resources:
       Tags:  { Project: rald-os }
 
 Outputs:
-  DomainIdentityArn:
-    Value:  !GetAtt RaldEmailIdentity.DkimDNSTokenName1
-    Description: "DKIM token 1 — add as CNAME in Cloudflare DNS"
+  DomainIdentity:
+    Value:       !Ref RaldEmailIdentity
+    Description: "SES domain identity — verify DKIM in Cloudflare DNS after deploy"
   SmtpEndpoint:
-    Value:  !Sub "email-smtp.${AWS::Region}.amazonaws.com"
-    Description: "SES SMTP endpoint for Cloudflare Worker email sending"
+    Value:       !Sub "email-smtp.${AWS::Region}.amazonaws.com"
+    Description: "SES SMTP endpoint — use with SMTP credentials from SSM"
   SmtpPort:
-    Value:  "587"
+    Value:       "587"
   SmtpKeyIdSSM:
-    Value:  /rald/ses/smtp-access-key-id
+    Value:       /rald/ses/smtp-access-key-id
   SmtpSecretSSM:
-    Value:  /rald/ses/smtp-secret-access-key
+    Value:       /rald/ses/smtp-secret-access-key
   ConfigSetName:
-    Value:  rald-transactional
+    Value:       rald-transactional
