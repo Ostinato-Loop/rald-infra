@@ -22,7 +22,7 @@ Resources:
         NextSigningKeyLength: RSA_2048_BIT
       MailFromAttributes:
         MailFromDomain:        !Sub "mail.${Domain}"
-        BehaviorOnMxFailure:   UseDefaultValue
+        BehaviorOnMxFailure:   USE_DEFAULT_VALUE
       FeedbackAttributes:
         EmailForwardingEnabled: true
       Tags:
