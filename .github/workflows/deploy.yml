@@ -60,7 +60,7 @@ jobs:
             --template-file cloudformation/ses-email.yml \
             --stack-name rald-ses-email \
             --parameter-overrides Environment=production \
-            --capabilities CAPABILITY_IAM \
+            --capabilities CAPABILITY_NAMED_IAM CAPABILITY_IAM \
             --no-fail-on-empty-changeset \
             --tags Project=rald-os Environment=production
           echo "SES stack deployed ✓"
